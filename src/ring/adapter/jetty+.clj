@@ -1,6 +1,7 @@
 (ns ring.adapter.jetty+
   (:require [ring.adapter.jetty :as jetty])
-  (:import (org.mortbay.jetty Server)
+  (:import (java.lang.reflect Method)
+           (org.mortbay.jetty Server)
            (org.mortbay.jetty.bio SocketConnector)
            (org.mortbay.jetty.security SslSocketConnector)))
 
@@ -19,6 +20,21 @@
   (throw
    (IllegalArgumentException. (str "Unknown connector type: " (pr-str type)))))
 
+(def bool-type (.getComponentType (class (boolean-array 0))))
+
+(def int-type (.getComponentType (class (int-array 0))))
+
+(defn get-setter [^Class class ^String name type]
+  (let [type ({Boolean bool-type
+               Integer int-type}
+              type type)]
+    (.getMethod class name ^objects (into-array [type]))))
+
+(alter-var-root #'get-setter memoize)
+
+(defn invoke-setter [obj ^Method method value]
+  (.invoke method obj ^objects (to-array [value])))
+
 (defn configure-connectors-reducer [connectors [the-name value]]
   (let [category (when-let [n (namespace the-name)]
                    (symbol n))]
@@ -31,8 +47,10 @@
             connector (get connectors category)
             method-name (->method-name the-name)]
         (try
-          (clojure.lang.Reflector/invokeInstanceMethod
-           connector method-name (into-array [value]))
+          (let [method (get-setter (.getClass connector)
+                                   method-name
+                                   (.getClass value))]
+            (invoke-setter connector method value))
           (catch Exception e
             (throw
              (IllegalArgumentException.
